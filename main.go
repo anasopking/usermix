@@ -105,6 +105,12 @@ func interactive(in io.Reader, out io.Writer) error {
 		break
 	}
 
+	domain, err := ask(r, out, "Email domain to add (blank for none): ")
+	if err != nil {
+		return err
+	}
+	suffix := emailSuffix(domain)
+
 	tmp, err := os.CreateTemp(".", ".usermix-*.tmp")
 	if err != nil {
 		return err
@@ -118,6 +124,7 @@ func interactive(in io.Reader, out io.Writer) error {
 		Progress: func(found, _ uint64) { bar.draw(found) },
 	}, func(name string) {
 		bw.WriteString(name)
+		bw.WriteString(suffix)
 		bw.WriteByte('\n')
 	})
 	bar.finish(written)
@@ -138,6 +145,18 @@ func interactive(in io.Reader, out io.Writer) error {
 		fmt.Fprintln(out, "That's fewer than asked for; give usermix more or more varied usernames for a bigger pool.")
 	}
 	return nil
+}
+
+// emailSuffix turns a user-typed domain into the "@domain" that gets
+// appended to every username, or "" for none. A leading "@" and any
+// surrounding whitespace are trimmed, so "hotmail.com" and "@hotmail.com"
+// both work.
+func emailSuffix(domain string) string {
+	d := strings.TrimPrefix(strings.TrimSpace(domain), "@")
+	if d == "" {
+		return ""
+	}
+	return "@" + d
 }
 
 func ask(r *bufio.Reader, out io.Writer, prompt string) (string, error) {
@@ -172,6 +191,7 @@ func generate(args []string) error {
 	seed := flags.Uint64("seed", 0, "random seed for repeatable output (0 = random)")
 	allowPlain := flags.Bool("allow-plain", false, "allow single-name-plus-number usernames like john2005 or oliver4006 (almost always already taken)")
 	workers := flags.Int("workers", 0, "CPU cores to use (0 = all)")
+	domain := flags.String("domain", "", "append @DOMAIN to every username, e.g. -domain hotmail.com")
 	out := flags.String("out", "", "file to write to (default: stdout)")
 	flags.Parse(args)
 	if flags.NArg() != 1 {
@@ -197,9 +217,11 @@ func generate(args []string) error {
 	defer closeW()
 	bw := bufio.NewWriterSize(w, 1<<20)
 
+	suffix := emailSuffix(*domain)
 	start := time.Now()
 	written := mix.Generate(corpus, *n, mix.Options{Seed: *seed, Workers: *workers}, func(name string) {
 		bw.WriteString(name)
+		bw.WriteString(suffix)
 		bw.WriteByte('\n')
 	})
 	if err := bw.Flush(); err != nil {

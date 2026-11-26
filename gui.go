@@ -113,11 +113,11 @@ func (s *guiServer) start(w http.ResponseWriter, r *http.Request) {
 		formatCount(len(names)), formatShort(corpus.Possible()))
 	s.mu.Unlock()
 
-	go s.run(corpus, n)
+	go s.run(corpus, n, emailSuffix(r.FormValue("domain")))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-func (s *guiServer) run(corpus *mix.Corpus, n uint64) {
+func (s *guiServer) run(corpus *mix.Corpus, n uint64, suffix string) {
 	written, path, elapsed, err := func() (uint64, string, time.Duration, error) {
 		tmp, err := os.CreateTemp(".", ".usermix-*.tmp")
 		if err != nil {
@@ -135,6 +135,7 @@ func (s *guiServer) run(corpus *mix.Corpus, n uint64) {
 			},
 		}, func(name string) {
 			bw.WriteString(name)
+			bw.WriteString(suffix)
 			bw.WriteByte('\n')
 		})
 		if err := bw.Flush(); err != nil {
@@ -204,6 +205,8 @@ const guiPage = `<!doctype html>
     <input id="file" name="file" placeholder="e.g. names.txt" required>
     <label for="count">How many usernames</label>
     <input id="count" name="count" type="number" min="1" required>
+    <label for="domain">Email domain (optional)</label>
+    <input id="domain" name="domain" placeholder="e.g. hotmail.com">
     <button id="go" type="submit">Generate</button>
   </form>
   <div class="bar"><div class="fill" id="fill"></div></div>
