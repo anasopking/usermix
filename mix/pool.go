@@ -1,92 +1,110 @@
 package mix
 
 import (
-	"fmt"
 	"sort"
-	"strconv"
-	"strings"
+	"unicode/utf8"
 )
 
 // Pools are what Corpus learns from your usernames: every word and number,
 // kept separately by the role it plays, so recombination only puts a part
 // back where a part like it belongs.
+//
+// Only parts that look like real parts of real names make it in. A word
+// has to be letters only, at least minWordLen long, and used at least
+// minSeen times across the input in that role; a one-off is far more often
+// a keyboard mash or a scrap left over from splitting one ("eh", "nh")
+// than a name. A number has to be one real usernames actually end with at
+// least minSeen times, so the pool is 07, 22, 1998 and the like rather
+// than every 3-digit value.
 type Pools struct {
-	leads []string // lowercased words seen as a name's first word
-	tails []string // lowercased words seen later in a name
-	seps  []string // separators used ("_", "-", ".")
+	lead, tail map[string]bool // the pooled words, for checking splits
 
-	// numbers groups learned numbers by digit count and gives each
-	// length's full range, so the pool is every number of that many
-	// digits, not just the ones actually seen — real names use plenty of
-	// numbers nobody happened to pick in a seed list. Grouping strictly by
-	// digit count, with no overlap between groups, is what lets Generate
-	// guarantee no two combinations decode to the same username: if two
-	// groups' ranges could overlap in value (a "looks like a year" group
-	// and a general 4-digit group both containing 1998, say), the same
-	// number could be reached by two different combinations, and so could
-	// the username built around it.
-	numbers map[int]numberRange
+	leadsByLen, tailsByLen   map[int][]string // pooled words by length in characters
+	leadBuckets, tailBuckets []lenBucket
 
-	// The same pools split by length in characters (numbers are already
-	// split by digit count above), so combinations can be built to land
-	// inside MinLen..MaxLen instead of being tried and thrown away.
-	leadsByLen, tailsByLen, sepsByLen    map[int][]string
-	leadBuckets, tailBuckets, sepBuckets []lenBucket
+	numbers map[int][]string // pooled trailing numbers by digit count
 }
 
-type numberRange struct {
-	lo, hi, width int // inclusive; width is the digit count, for zero-padding
-}
+const (
+	minWordLen = 3
+	minSeen    = 3
 
-func (nr numberRange) size() uint64 { return uint64(nr.hi-nr.lo) + 1 }
+	// Three-letter pieces are mostly initials and scraps ("ecp", "rpa");
+	// the real ones (amy, joe, ali, lee) are common, so a three-letter
+	// word has to be seen this often to be pooled.
+	minSeenShort = 20
 
-func (nr numberRange) format(n int) string {
-	return fmt.Sprintf("%0*d", nr.width, n+nr.lo)
-}
+	// numberCoverage keeps, for each digit count, only the most common
+	// endings that together cover this share of the input's endings of
+	// that length. Every pooled number is picked equally often, so a long
+	// tail of one-off numbers (0985, 4417) would otherwise drown out the
+	// years and favourites (1998, 2000, 786, 123) real names mostly use.
+	numberCoverage = 0.5
+)
 
-// LearnPools builds Pools from names' refined segments (see Vocab.refine).
-func LearnPools(refined [][]Segment) *Pools {
-	p := &Pools{numbers: map[int]numberRange{}}
-	leadSet, tailSet, sepSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	numSeen := map[int][]int{}
-
-	for _, segs := range refined {
+// LearnPools builds Pools from names' cleaned segments (see clean).
+func LearnPools(cleaned [][]Segment) *Pools {
+	leadSeen, tailSeen, numSeen := map[string]int{}, map[string]int{}, map[string]int{}
+	for _, segs := range cleaned {
 		lead := true
-		for _, seg := range segs {
+		for i, seg := range segs {
 			switch seg.Kind {
 			case Word:
-				w := strings.ToLower(seg.Text)
-				if len([]rune(w)) < 2 {
-					continue // initials aren't pooled as words
-				}
 				if lead {
-					leadSet[w] = true
+					leadSeen[seg.Text]++
 				} else {
-					tailSet[w] = true
+					tailSeen[seg.Text]++
 				}
 				lead = false
 			case Number:
-				digits := len(seg.Text)
-				if n, err := strconv.Atoi(seg.Text); err == nil {
-					numSeen[digits] = append(numSeen[digits], n)
+				if i == len(segs)-1 && i > 0 {
+					numSeen[seg.Text]++
 				}
-			case Separator:
-				sepSet[seg.Text] = true
 			}
 		}
 	}
 
-	p.leads = sortedKeys(leadSet)
-	p.tails = sortedKeys(tailSet)
-	p.seps = sortedKeys(sepSet)
-	p.leadsByLen, p.tailsByLen, p.sepsByLen = byLength(p.leads), byLength(p.tails), byLength(p.seps)
-	p.leadBuckets, p.tailBuckets, p.sepBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen), bucketsOf(p.sepsByLen)
-	for digits, ns := range numSeen {
-		lo, hi := ns[0], ns[0]
-		for _, n := range ns {
-			lo, hi = min(lo, n), max(hi, n)
+	p := &Pools{lead: map[string]bool{}, tail: map[string]bool{}, numbers: map[int][]string{}}
+	keepWords := func(seen map[string]int, set map[string]bool) {
+		for w, n := range seen {
+			l := utf8.RuneCountInString(w)
+			if l < minWordLen || !wordLike(w) || n < minSeen || (l == minWordLen && n < minSeenShort) {
+				continue
+			}
+			{
+				set[w] = true
+			}
 		}
-		p.numbers[digits] = numberRange{lo: lo, hi: hi, width: digits}
+	}
+	keepWords(leadSeen, p.lead)
+	keepWords(tailSeen, p.tail)
+	p.leadsByLen, p.tailsByLen = byLength(sortedKeys(p.lead)), byLength(sortedKeys(p.tail))
+	p.leadBuckets, p.tailBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen)
+
+	byWidth := map[int][]string{}
+	occurrences := map[int]int{}
+	for num, n := range numSeen {
+		if len(num) <= maxDigitRun {
+			byWidth[len(num)] = append(byWidth[len(num)], num)
+			occurrences[len(num)] += n
+		}
+	}
+	for width, nums := range byWidth {
+		sort.Slice(nums, func(i, j int) bool {
+			if numSeen[nums[i]] != numSeen[nums[j]] {
+				return numSeen[nums[i]] > numSeen[nums[j]]
+			}
+			return nums[i] < nums[j]
+		})
+		covered := 0
+		for _, num := range nums {
+			if numSeen[num] < minSeen || float64(covered) >= numberCoverage*float64(occurrences[width]) {
+				break
+			}
+			covered += numSeen[num]
+			p.numbers[width] = append(p.numbers[width], num)
+		}
+		sort.Strings(p.numbers[width])
 	}
 	return p
 }
@@ -113,7 +131,7 @@ type lenBucket struct {
 func byLength(words []string) map[int][]string {
 	m := map[int][]string{}
 	for _, w := range words {
-		n := len([]rune(w))
+		n := utf8.RuneCountInString(w)
 		m[n] = append(m[n], w)
 	}
 	return m
@@ -128,9 +146,8 @@ func bucketsOf(m map[int][]string) []lenBucket {
 	return out
 }
 
-// buckets lists a slot's pool split by length, shortest first. Numbers
-// longer than maxDigitRun digits are left out: Garbage rejects every
-// username containing one, so they could never be used.
+// buckets lists a slot's pool split by length, shortest first. A number
+// slot has exactly one width, so it has at most one bucket.
 func (p *Pools) buckets(s Shape) []lenBucket {
 	switch s.Kind {
 	case Word:
@@ -138,17 +155,10 @@ func (p *Pools) buckets(s Shape) []lenBucket {
 			return p.leadBuckets
 		}
 		return p.tailBuckets
-	case Separator:
-		return p.sepBuckets
 	case Number:
-		var out []lenBucket
-		for width, nr := range p.numbers {
-			if width <= maxDigitRun {
-				out = append(out, lenBucket{width, nr.size()})
-			}
+		if ns := p.numbers[s.Width]; len(ns) > 0 {
+			return []lenBucket{{s.Width, uint64(len(ns))}}
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].length < out[j].length })
-		return out
 	}
 	return nil
 }
@@ -162,10 +172,81 @@ func (p *Pools) pick(s Shape, length int, idx uint64) string {
 			return p.leadsByLen[length][idx]
 		}
 		return p.tailsByLen[length][idx]
-	case Separator:
-		return p.sepsByLen[length][idx]
 	case Number:
-		return p.numbers[length].format(int(idx))
+		return p.numbers[length][idx]
 	}
 	return ""
+}
+
+// splits calls fn with every way letters can be read as words pieces
+// long, a pooled lead word followed by pooled tail words, giving the
+// length in bytes of each piece; it stops early if fn returns false.
+func (p *Pools) splits(letters string, words int, fn func(lens []int) bool) {
+	lens := make([]int, 0, words)
+	var walk func(rest string) bool
+	walk = func(rest string) bool {
+		i := len(lens)
+		if i == words-1 {
+			set := p.tail
+			if i == 0 {
+				set = p.lead
+			}
+			if !set[rest] {
+				return true
+			}
+			lens = append(lens, len(rest))
+			ok := fn(lens)
+			lens = lens[:i]
+			return ok
+		}
+		set := p.tail
+		if i == 0 {
+			set = p.lead
+		}
+		for j := 1; j < len(rest); j++ {
+			if !utf8.RuneStart(rest[j]) || !set[rest[:j]] {
+				continue
+			}
+			lens = append(lens, j)
+			ok := walk(rest[j:])
+			lens = lens[:i]
+			if !ok {
+				return false
+			}
+		}
+		return true
+	}
+	walk(letters)
+}
+
+// canonical reports whether parts is the one way usermix builds the
+// letters they spell. The same letters can come out of different picks
+// ("maria"+"garcia" and "mari"+"agarcia", or one pooled word that is
+// itself two), and only one of those may be used or Generate would write
+// the same username twice. The chosen one uses the fewest words, and among
+// splits into that many words, the longest first word, then the longest
+// second.
+func (p *Pools) canonical(parts []string) bool {
+	letters := ""
+	for _, w := range parts {
+		letters += w
+	}
+	for k := 1; k < len(parts); k++ {
+		found := false
+		p.splits(letters, k, func([]int) bool { found = true; return false })
+		if found {
+			return false
+		}
+	}
+	better := false
+	p.splits(letters, len(parts), func(lens []int) bool {
+		for i, n := range lens {
+			if n != len(parts[i]) {
+				better = n > len(parts[i])
+				return !better
+			}
+		}
+		return true
+	})
+	return !better
 }

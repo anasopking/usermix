@@ -2,6 +2,7 @@ package mix
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,54 +74,129 @@ func TestVocabDoesNotLearnFromDigitOnlyBoundary(t *testing.T) {
 	}
 }
 
-func TestNoPlainNames(t *testing.T) {
-	// john2005, oliver4006, johnthorne1195 (joined with no separator, so
-	// it reads the same way) and a bare "oliver" must never be produced.
-	// Checking this needs the same vocabulary Learn used, so that a
-	// legitimate two-name join like "mariathorne" (no number, so it
-	// doesn't have the unwanted look) isn't mistaken for a bare word.
-	names := seedNames()
-	v := buildVocab(names)
-	c := Learn(names, false)
-	seen := map[string]bool{}
-	n := Generate(c, 200000, Options{Seed: 1}, func(name string) {
-		segs := v.refine(Split(name))
-		if len(segs) == 1 {
-			t.Fatalf("produced a bare name: %q", name)
+// wordsIn reports the fewest pooled words the letters of name split into
+// (0 if none), and its trailing number.
+func wordsIn(c *Corpus, name string) (int, string) {
+	i := len(name)
+	for i > 0 && name[i-1] >= '0' && name[i-1] <= '9' {
+		i--
+	}
+	for k := 1; k <= maxWords; k++ {
+		found := false
+		c.pools.splits(name[:i], k, func([]int) bool { found = true; return false })
+		if found {
+			return k, name[i:]
 		}
-		if Plain(segs) {
-			t.Fatalf("produced a plain name-plus-number: %q", name)
+	}
+	return 0, name[i:]
+}
+
+var lettersThenNumber = regexp.MustCompile(`^[a-z]+[0-9]{0,4}$`)
+
+func TestOutputIsNamesThenOptionalNumber(t *testing.T) {
+	// Every username is two or three whole words with no connector, then
+	// at most one number, at the very end: never "john2005" (one name and
+	// a number), never "kevin45smith", never "maria.garcia".
+	c := Learn(seedNames(), false)
+	n := Generate(c, 20000, Options{Seed: 1}, func(name string) {
+		if !lettersThenNumber.MatchString(name) {
+			t.Fatalf("%q is not letters then an optional trailing number", name)
 		}
-		seen[name] = true
+		if k, _ := wordsIn(c, name); k < 2 {
+			t.Fatalf("%q is not made of two or more whole words (got %d)", name, k)
+		}
 	})
 	if n == 0 {
 		t.Fatal("generated nothing")
 	}
 }
 
+func TestNumbersOnlyComeFromRealEndings(t *testing.T) {
+	// A number in the middle of an input name ("kevin45smith") neither
+	// makes a pattern nor feeds the number pool.
+	names := append(seedNames(), "kevin4242smith", "maria4242garcia")
+	c := Learn(names, false)
+	Generate(c, 20000, Options{Seed: 2}, func(name string) {
+		if strings.Contains(name, "4242") {
+			t.Fatalf("%q uses a number only ever seen mid-name", name)
+		}
+	})
+}
+
 func TestAllowPlainOptIn(t *testing.T) {
 	c := Learn(seedNames(), true)
 	foundPlain := false
 	Generate(c, 50000, Options{Seed: 1}, func(name string) {
-		if Plain(Split(name)) {
+		if k, num := wordsIn(c, name); k == 1 && num != "" {
 			foundPlain = true
 		}
 	})
 	if !foundPlain {
-		t.Fatal("allowPlain=true never produced a plain name-plus-number")
+		t.Fatal("allowPlain=true never produced a single name plus a number")
+	}
+}
+
+func TestOutputFollowsInputPatternMix(t *testing.T) {
+	// Three quarters of the input is two names with no number, a quarter
+	// is two names and a 2-digit number; the output should match, however
+	// many more combinations the numbered pattern allows.
+	firsts := []string{"maria", "john", "kevin", "oliver", "sara", "tobias", "ines", "yusuf", "greta", "amir"}
+	lasts := []string{"garcia", "smith", "lindqvist", "hollis", "carter", "thorne", "quigley", "ashby", "okafor", "winslow"}
+	var names []string
+	for i, f := range firsts {
+		for j, l := range lasts {
+			names = append(names, f+"_"+l)
+			if (i+j)%3 == 0 {
+				names = append(names, fmt.Sprintf("%s.%s%02d", f, l, 10+(i*10+j)%40))
+			}
+		}
+	}
+	c := Learn(names, false)
+	var withNum, all float64
+	Generate(c, 3000, Options{Seed: 9}, func(name string) {
+		all++
+		if _, num := wordsIn(c, name); num != "" {
+			withNum++
+		}
+	})
+	want := float64(len(names)-100) / float64(len(names))
+	if got := withNum / all; got < want-0.05 || got > want+0.05 {
+		t.Fatalf("%.2f of output has a number, want about %.2f like the input", got, want)
+	}
+}
+
+func TestAmbiguousSplitsAreNotDuplicated(t *testing.T) {
+	// "annamaria" can be built as anna+maria or as one pooled word, and
+	// "rosaline"+"smith" as rosa+linesmith; each must still come out once.
+	names := []string{
+		"anna_maria", "anna.maria", "annamaria_lee", "annamaria.lee",
+		"rosa_linesmith", "rosa.linesmith", "rosaline.smith", "rosaline_smith",
+		"anna_smith", "anna.smith", "rosa_lee", "rosa.lee", "maria_lee", "maria.lee",
+	}
+	c := Learn(names, false)
+	seen := map[string]bool{}
+	Generate(c, c.Total(), Options{Seed: 4}, func(name string) {
+		if seen[name] {
+			t.Fatalf("duplicate output: %q", name)
+		}
+		seen[name] = true
+	})
+	if len(seen) == 0 {
+		t.Fatal("generated nothing")
 	}
 }
 
 func TestGenerateIsDuplicateFree(t *testing.T) {
-	c := Learn(seedNames(), false)
+	names := bigNames(20000)
+	c := Learn(names, false)
 	if c.Total() < 60000 {
 		t.Fatalf("test corpus too small: %d combinations", c.Total())
 	}
 	const n = 20000
 	seen := make(map[string]bool, n)
 	input := map[string]bool{}
-	for _, name := range seedNames() {
-		input[strings.ToLower(name)] = true
+	for _, name := range names {
+		input[strings.NewReplacer("_", "", ".", "", "-", "").Replace(strings.ToLower(name))] = true
 	}
 	count := Generate(c, n, Options{Seed: 42}, func(name string) {
 		if seen[name] {
@@ -137,7 +213,7 @@ func TestGenerateIsDuplicateFree(t *testing.T) {
 }
 
 func TestGenerateExhaustsSmallCorpus(t *testing.T) {
-	c := Learn([]string{"john.smith", "john.carter", "amy.smith"}, false)
+	c := Learn([]string{"john.smith", "john.carter", "john.hollis", "maria.smith", "maria.carter", "sara_hollis", "sara_smith", "sara_carter", "maria_hollis"}, false)
 	total := c.Total()
 	if total == 0 {
 		t.Fatal("expected some combinations")
@@ -256,11 +332,16 @@ func TestEveryCombinationFitsLengthLimits(t *testing.T) {
 	if c.Total() == 0 {
 		t.Fatal("expected combinations")
 	}
-	f := newFeistel(c.Total(), 5)
-	for i := uint64(0); i < 200000 && i < c.Total(); i++ {
-		name := c.decode(f.permute(i))
-		if n := len([]rune(name)); n < MinLen || n > MaxLen {
-			t.Fatalf("decoded %q has %d characters, want %d..%d", name, n, MinLen, MaxLen)
+	for ti, sp := range c.spaces {
+		f := newFeistel(sp.total, 5)
+		for i := uint64(0); i < 50000 && i < sp.total; i++ {
+			name, ok := c.decode(ti, f.permute(i))
+			if !ok {
+				continue
+			}
+			if n := len([]rune(name)); n < MinLen || n > MaxLen {
+				t.Fatalf("decoded %q has %d characters, want %d..%d", name, n, MinLen, MaxLen)
+			}
 		}
 	}
 }
@@ -290,15 +371,14 @@ func TestBigInputGeneratesQuickly(t *testing.T) {
 }
 
 func TestHugePoolsDoNotOverflow(t *testing.T) {
-	p := &Pools{numbers: map[int]numberRange{}}
 	big := make([]string, 1<<20)
 	for i := range big {
-		big[i] = "abc" // only the pool sizes matter here: 4 slots of 2^20 is 2^80
+		big[i] = "abc" // only the pool sizes matter here: 3 slots of 2^20 and 10^4 numbers is past 2^62
 	}
-	p.leads, p.tails, p.seps = big, big, []string{"_"}
-	p.leadsByLen, p.tailsByLen, p.sepsByLen = byLength(p.leads), byLength(p.tails), byLength(p.seps)
-	p.leadBuckets, p.tailBuckets, p.sepBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen), bucketsOf(p.sepsByLen)
-	shape := []Shape{{Kind: Word, Lead: true}, {Kind: Word}, {Kind: Word}, {Kind: Word}, {Kind: Separator}}
+	p := &Pools{numbers: map[int][]string{4: make([]string, 10000)}}
+	p.leadsByLen, p.tailsByLen = byLength(big), byLength(big)
+	p.leadBuckets, p.tailBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen)
+	shape := []Shape{{Kind: Word, Lead: true}, {Kind: Word}, {Kind: Word}, {Kind: Number, Width: 4}}
 	cells, total := cellsOf(shape, p)
 	if total > maxTotal {
 		t.Fatalf("total %d exceeds cap", total)
@@ -309,5 +389,25 @@ func TestHugePoolsDoNotOverflow(t *testing.T) {
 	}
 	if sum != total {
 		t.Fatalf("cells sum to %d, total says %d", sum, total)
+	}
+}
+
+func TestPossibleMatchesWhatGenerateWrites(t *testing.T) {
+	// Small enough to be counted exactly: Possible must equal how many
+	// usernames Generate can actually write before running dry.
+	c := Learn(seedNames(), false)
+	if c.Total() > estimateSample*uint64(len(c.spaces)) {
+		t.Skip("corpus too big to be exact")
+	}
+	got := Generate(c, c.Total()+1, Options{Seed: 5}, func(string) {})
+	if got != c.Possible() {
+		t.Fatalf("Possible() = %d, Generate wrote %d", c.Possible(), got)
+	}
+}
+
+func TestPossibleEstimatesBigCorpus(t *testing.T) {
+	c := Learn(bigNames(20000), false)
+	if p, total := c.Possible(), c.Total(); p == 0 || p > total {
+		t.Fatalf("Possible() = %d, want between 1 and Total() = %d", p, total)
 	}
 }

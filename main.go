@@ -84,11 +84,11 @@ func interactive(in io.Reader, out io.Writer) error {
 	}
 
 	corpus := mix.Learn(names, false)
-	if corpus.Total() == 0 {
+	if corpus.Possible() == 0 {
 		return errors.New("found no usable patterns in that file; try one with more usernames")
 	}
 	fmt.Fprintf(out, "Learned from %s usernames; %s possible from them.\n",
-		formatCount(len(names)), formatCount(corpus.Total()))
+		formatCount(len(names)), formatShort(corpus.Possible()))
 
 	var n uint64
 	for {
@@ -170,7 +170,7 @@ func generate(args []string) error {
 	flags := flag.NewFlagSet("generate", flag.ExitOnError)
 	n := flags.Uint64("n", 1_000_000, "how many usernames to generate")
 	seed := flags.Uint64("seed", 0, "random seed for repeatable output (0 = random)")
-	allowPlain := flags.Bool("allow-plain", false, "allow bare name-plus-number usernames like john2005 or oliver4006 (almost always already taken)")
+	allowPlain := flags.Bool("allow-plain", false, "allow single-name-plus-number usernames like john2005 or oliver4006 (almost always already taken)")
 	workers := flags.Int("workers", 0, "CPU cores to use (0 = all)")
 	out := flags.String("out", "", "file to write to (default: stdout)")
 	flags.Parse(args)
@@ -186,7 +186,7 @@ func generate(args []string) error {
 		return fmt.Errorf("%s has no usernames", flags.Arg(0))
 	}
 	corpus := mix.Learn(names, *allowPlain)
-	if corpus.Total() == 0 {
+	if corpus.Possible() == 0 {
 		return errors.New("found no usable patterns; give usermix more usernames, or try -allow-plain")
 	}
 
@@ -205,8 +205,8 @@ func generate(args []string) error {
 	if err := bw.Flush(); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "usermix: wrote %s usernames in %s (%s available from this input)\n",
-		formatCount(written), time.Since(start).Round(100*time.Millisecond), formatCount(corpus.Total()))
+	fmt.Fprintf(os.Stderr, "usermix: wrote %s usernames in %s (about %s possible from this input)\n",
+		formatCount(written), time.Since(start).Round(100*time.Millisecond), formatShort(corpus.Possible()))
 	if written < *n {
 		fmt.Fprintln(os.Stderr, "usermix: fewer than requested; give usermix more or more varied usernames for a bigger pool")
 	}
@@ -215,7 +215,7 @@ func generate(args []string) error {
 
 func info(args []string) error {
 	flags := flag.NewFlagSet("info", flag.ExitOnError)
-	allowPlain := flags.Bool("allow-plain", false, "count bare name-plus-number patterns like john2005")
+	allowPlain := flags.Bool("allow-plain", false, "count single-name-plus-number patterns like john2005")
 	flags.Parse(args)
 	if flags.NArg() != 1 {
 		return errors.New("info needs exactly one file of usernames (or - for stdin)")
@@ -230,7 +230,7 @@ func info(args []string) error {
 	corpus := mix.Learn(names, *allowPlain)
 	fmt.Printf("Usernames read     %s\n", formatCount(len(names)))
 	fmt.Printf("Patterns found     %s\n", formatCount(len(corpus.Templates())))
-	fmt.Printf("Usernames possible %s\n", formatCount(corpus.Total()))
+	fmt.Printf("Usernames possible %s\n", formatShort(corpus.Possible()))
 	return nil
 }
 
@@ -266,6 +266,25 @@ func openOutput(path string) (io.Writer, func() error, error) {
 		return nil, nil, err
 	}
 	return f, f.Close, nil
+}
+
+// formatShort writes n the short way, rounded: 950, 12K, 1.4M, 22B, 3.1T.
+func formatShort(n uint64) string {
+	units := []struct {
+		size   float64
+		suffix string
+	}{{1e15, "Q"}, {1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
+	v := float64(n)
+	for _, u := range units {
+		if v >= u.size {
+			x := v / u.size
+			if x < 10 {
+				return strings.TrimSuffix(fmt.Sprintf("%.1f", x), ".0") + u.suffix
+			}
+			return fmt.Sprintf("%.0f", x) + u.suffix
+		}
+	}
+	return strconv.FormatUint(n, 10)
 }
 
 // formatCount writes n with thousands separators.

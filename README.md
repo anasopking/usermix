@@ -11,10 +11,10 @@ go build -o usermix .
 
 ```
 Usernames file: mine.txt
-Learned from 1,000,000 usernames; 476,091,132,000 possible from them.
+Learned from 912,153 usernames; 161T possible from them.
 How many usernames to generate: 1000000000
 Generating [##############################] 100% (1,000,000,000/1,000,000,000)
-Wrote 1,000,000,000 usernames to generated_1000000000.txt in 7m47s.
+Wrote 1,000,000,000 usernames to generated_1000000000.txt in 18m.
 ```
 
 That's the whole interface: a file, a count, a progress bar, and a numbered
@@ -24,28 +24,42 @@ scripting; the plain command above is all you need otherwise.
 Prefer a window to a terminal? Run `./usermix gui`. It opens a page in your
 browser with a box for the usernames file, a box for how many to make, a
 Generate button and a progress bar, and writes to `generated_<count>.txt`
-the same way. The window makes usernames without connectors (`_ - .`): it
-strips them from your list first, so `kevin_smith` is learned as
-`kevinsmith`. Usernames are 8 to 15 characters long.
+the same way.
+
+Every username is 8 to 15 characters: two or three whole names run
+together with no connector (`_ - .`), then optionally one number at the
+very end, like `kevinsmith45` or `mariagarcia`. Never a number in the
+middle, never a connector. The "possible" count is how many it can
+actually write after every filter below, shown short: `950`, `1.4M`,
+`22B`, `161T`.
 
 ## What it does
 
-Most of `mine.txt`'s usernames are built the same handful of ways: a name,
-a separator, a surname, a number; a name alone with a number; two names run
-together. usermix finds those shapes, then pools every word, number and
-separator it saw across the *whole* file by the role it played — words
-that started a name, words that came later, which separators were used,
-which numbers — and reassembles them in every combination the shapes
-allow.
+Most of `mine.txt`'s usernames are built the same handful of ways: two
+names; two names and a 2-digit number; two names and a year. usermix
+splits every username into its names and its trailing number (dropping
+connectors, so `kevin_smith` is learned as `kevin` + `smith`), pools every
+name by the role it played — names that started a username, names that
+came later — and every ending number, and reassembles them.
 
-A few hundred first names and a few hundred surnames already give
-thousands times thousands of combinations; a real list of a million
-usernames gives you many more words to mix, and the combinations run into
-the billions.
+What keeps the output looking real:
+
+- **Patterns in the same mix as your list.** If half your list is two
+  names with nothing else and a quarter is two names and a 2-digit number,
+  so is the output. A pattern doesn't win just because it can be built
+  more ways.
+- **Only names your list really uses.** A word has to show up at least 3
+  times in your list to be pooled (20 times for a 3-letter one), so
+  one-off mashes and scraps left over from splitting (`eh`, `jasm`) never
+  get in.
+- **Only numbers your list really ends with.** For each length, the most
+  common endings that cover half of your list's endings of that length:
+  years, `07`, `123`, `786` and the like, not every possible 4-digit
+  value.
 
 ```
-mine.txt:        maria.garcia92, tobiaslindqvist, kevin_hollis, dariwex07, sara.ashby88
-generated.txt:   maria_lindqvist, kevin.garcia41, tobiaslhollis77, saradariwex, ...
+mine.txt:        maria.garcia92, tobiaslindqvist, kevin_hollis, sara.ashby88
+generated.txt:   marialindqvist, kevingarcia92, tobiashollis, saragarcia88, ...
 ```
 
 Nothing here is a built-in name list. If you give it usernames in Spanish,
@@ -93,9 +107,7 @@ usermix never produces:
 
 - a bare name on its own (`oliver`) — almost certainly already somebody's
   real account;
-- a name (or two names run together) followed by a number with nothing
-  else — `john2005`, `oliver4006`, and just as much `johnthorne1195`, which
-  reads exactly the same way even though it was built from two names. Pass
+- a single name followed by a number (`john2005`, `oliver4006`). Pass
   `-allow-plain` to allow this shape back.
 
 It also runs every candidate through a garbage filter before writing it:
@@ -127,7 +139,7 @@ teaches a word.
 |------|---------|
 | `-n` | how many usernames to generate (default 1,000,000) |
 | `-seed` | fixed seed for repeatable output (0 = random) |
-| `-allow-plain` | allow bare name-plus-number usernames like `john2005` |
+| `-allow-plain` | allow single-name-plus-number usernames like `john2005` |
 | `-workers` | CPU cores to use (0 = all) |
 | `-out` | file to write to (default: stdout) |
 
@@ -137,9 +149,8 @@ file for a larger pool.
 
 ## Performance
 
-On a 4-core machine, from a million-username input with a few thousand
-distinct words: about 1.3 million usernames per second, so a billion take
-around 8 minutes. Throughput scales with CPU cores and drops a little as
+On a 4-core machine, from a 900,000-username input: about 900,000
+usernames per second, so a billion take around 18 minutes. Throughput scales with CPU cores and drops a little as
 `-n` approaches how many combinations the input can actually produce
 (most of the last few are found by skipping ones the garbage filter or an
 exhausted block rejects).

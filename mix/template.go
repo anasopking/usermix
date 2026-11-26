@@ -2,9 +2,9 @@ package mix
 
 import "sort"
 
-// Template is one structural pattern found in the input, such as
-// Word(lead) + Separator + Word — and how many distinct usernames it can
-// produce once every slot is filled from Pools.
+// Template is one structural pattern found in the input, such as two
+// words then a 2-digit number, how often the input uses it, and how many
+// distinct usernames it can produce once every slot is filled from Pools.
 type Template struct {
 	shape []Shape
 	seen  int    // how many input usernames had this shape
@@ -17,20 +17,22 @@ type Template struct {
 // never overflow uint64. Combinations past the cap are skipped.
 const maxTotal = uint64(1) << 62
 
-// Templates extracts every distinct structural pattern among names'
-// refined segments (see Vocab.refine), with each one's size: the number of
-// combinations it can produce once word, number and separator slots are
-// filled from pools. Patterns that are just a bare word (a name on its
-// own) or a bare word followed by a bare number ("john2005", "oliver4006"
-// — almost always already taken) are left out unless allowPlain is true.
-func Templates(refined [][]Segment, pools *Pools, allowPlain bool) []Template {
+// maxWords is the most words a generated username joins together; more
+// than three run-together words stops reading as a name.
+const maxWords = 3
+
+// Templates extracts every usable structural pattern among names' cleaned
+// segments (see clean), with how many input names follow each and how many
+// combinations it can produce. Usable means letters first and at most one
+// number, at the very end: kevinsmith45, never kevin45smith. It also means
+// at least two words, so a bare name on its own ("oliver") or a bare name
+// plus a number ("john2005", almost always already taken) is never made;
+// allowPlain lets the second back in.
+func Templates(cleaned [][]Segment, pools *Pools, allowPlain bool) []Template {
 	seen := map[string]*Template{}
 	var order []string
-	for _, segs := range refined {
-		if len(segs) == 0 {
-			continue
-		}
-		if !allowPlain && (len(segs) == 1 || Plain(segs)) {
+	for _, segs := range cleaned {
+		if !usable(segs, allowPlain) {
 			continue
 		}
 		shape := shapeOf(segs)
@@ -51,8 +53,31 @@ func Templates(refined [][]Segment, pools *Pools, allowPlain bool) []Template {
 			templates = append(templates, *t)
 		}
 	}
-	sort.SliceStable(templates, func(i, j int) bool { return templates[i].total > templates[j].total })
+	sort.SliceStable(templates, func(i, j int) bool { return templates[i].seen > templates[j].seen })
 	return templates
+}
+
+func usable(segs []Segment, allowPlain bool) bool {
+	words := 0
+	for i, seg := range segs {
+		switch seg.Kind {
+		case Word:
+			words++
+		case Number:
+			if i != len(segs)-1 || len(seg.Text) > maxDigitRun {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if words > maxWords || words == 0 {
+		return false
+	}
+	if words == 1 {
+		return allowPlain && len(segs) == 2
+	}
+	return true
 }
 
 func shapeKey(shape []Shape) string {
@@ -64,7 +89,7 @@ func shapeKey(shape []Shape) string {
 		case s.Kind == Word:
 			b[i] = 'T'
 		case s.Kind == Number:
-			b[i] = 'N'
+			b[i] = byte('0' + s.Width)
 		default:
 			b[i] = 'S'
 		}

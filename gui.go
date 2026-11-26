@@ -96,9 +96,8 @@ func (s *guiServer) start(w http.ResponseWriter, r *http.Request) {
 		fail("That file has no usernames in it.")
 		return
 	}
-	names = stripSeparators(names)
-	corpus := mix.Learn(names, true)
-	if corpus.Total() == 0 {
+	corpus := mix.Learn(names, false)
+	if corpus.Possible() == 0 {
 		fail("Found no usable patterns in that file; try one with more usernames.")
 		return
 	}
@@ -111,7 +110,7 @@ func (s *guiServer) start(w http.ResponseWriter, r *http.Request) {
 	}
 	s.running, s.failed, s.found, s.total = true, false, 0, n
 	s.message = fmt.Sprintf("Learned from %s usernames; %s possible from them.",
-		formatCount(len(names)), formatCount(corpus.Total()))
+		formatCount(len(names)), formatShort(corpus.Possible()))
 	s.mu.Unlock()
 
 	go s.run(corpus, n)
@@ -175,30 +174,6 @@ func (s *guiServer) status(w http.ResponseWriter, r *http.Request) {
 		"message": s.message,
 		"failed":  s.failed,
 	})
-}
-
-// stripSeparators removes _ - . from every name, so the GUI makes usernames
-// without connectors: kevin_smith is learned as kevinsmith. Names that end
-// up empty or duplicate (ignoring case) are dropped.
-func stripSeparators(names []string) []string {
-	seen := make(map[string]bool, len(names))
-	out := names[:0:0]
-	for _, name := range names {
-		var b strings.Builder
-		for _, seg := range mix.Split(name) {
-			if seg.Kind != mix.Separator {
-				b.WriteString(seg.Text)
-			}
-		}
-		joined := b.String()
-		key := strings.ToLower(joined)
-		if joined == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, joined)
-	}
-	return out
 }
 
 const guiPage = `<!doctype html>

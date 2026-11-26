@@ -6,7 +6,10 @@
 // a few hundred names. See README.md for the full design.
 package mix
 
-import "unicode"
+import (
+	"strings"
+	"unicode"
+)
 
 // Kind classifies a Segment.
 type Kind int
@@ -75,11 +78,15 @@ func boundary(runes []rune, i int) bool {
 }
 
 // Shape describes one slot in a structural pattern: what kind of segment it
-// holds, and for a Word, whether it is the name's first word (its role
-// affects which pool it draws from, so "dark" leads and "wolf" follows).
+// holds; for a Word, whether it is the name's first word (its role affects
+// which pool it draws from, so "maria" leads and "garcia" follows); and for
+// a Number, how many digits it has, so a pattern ending in a 2-digit number
+// is weighted by how often real names end that way, separately from one
+// ending in a year.
 type Shape struct {
-	Kind Kind
-	Lead bool // only meaningful when Kind == Word
+	Kind  Kind
+	Lead  bool // only meaningful when Kind == Word
+	Width int  // only meaningful when Kind == Number
 }
 
 // shapeOf converts segs to the pattern Pool and Pattern use to group
@@ -89,9 +96,44 @@ func shapeOf(segs []Segment) []Shape {
 	lead := true
 	for i, seg := range segs {
 		shapes[i] = Shape{Kind: seg.Kind, Lead: seg.Kind == Word && lead}
+		if seg.Kind == Number {
+			shapes[i].Width = len(seg.Text)
+		}
 		if seg.Kind == Word {
 			lead = false
 		}
 	}
 	return shapes
+}
+
+// clean turns a name's refined segments into what usermix learns from:
+// connectors dropped (usernames are made without them, so kevin_smith is
+// learned as kevin, smith) and words lowercased.
+func clean(segs []Segment) []Segment {
+	out := make([]Segment, 0, len(segs))
+	for _, seg := range segs {
+		switch seg.Kind {
+		case Separator:
+			continue
+		case Word:
+			seg.Text = strings.ToLower(seg.Text)
+		}
+		out = append(out, seg)
+	}
+	return out
+}
+
+// wordLike reports whether w is made only of letters and has a vowel, so
+// stray symbols (%40, +) and consonant scraps never become pool words.
+func wordLike(w string) bool {
+	vowel := false
+	for _, r := range w {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+		if r >= 128 || strings.ContainsRune("aeiouy", r) {
+			vowel = true
+		}
+	}
+	return vowel
 }
