@@ -28,10 +28,22 @@ type space struct {
 	weight float64 // share of the input that follows this template
 }
 
-// Learn builds a Corpus from a list of usernames (one per line, as given to
-// the CLI). allowPlain controls whether a single word plus a number
+// Learn builds a Corpus whose usernames end with a random 1-to-3 digit
+// number. allowPlain controls whether a single word plus a number
 // ("john2005") is allowed; see Templates.
 func Learn(names []string, allowPlain bool) *Corpus {
+	return LearnDigits(names, allowPlain, minDigits, maxDigits)
+}
+
+// LearnDigits is Learn with the trailing number's length chosen by the
+// caller: every username ends with a random number of loDigits..hiDigits
+// digits. Pass 0, 0 for no trailing number at all, or the same value twice
+// (2, 2) for exactly that many digits. Values are clamped to 0..maxDigits.
+func LearnDigits(names []string, allowPlain bool, loDigits, hiDigits int) *Corpus {
+	loDigits, hiDigits = clampDigits(loDigits), clampDigits(hiDigits)
+	if loDigits > hiDigits {
+		loDigits, hiDigits = hiDigits, loDigits
+	}
 	vocab := buildVocab(names)
 	cleaned := make([][]Segment, len(names))
 	for i, name := range names {
@@ -39,7 +51,8 @@ func Learn(names []string, allowPlain bool) *Corpus {
 	}
 
 	pools := LearnPools(cleaned)
-	templates := Templates(cleaned, pools, allowPlain)
+	pools.fillRandomNumbers(loDigits, hiDigits)
+	templates := Templates(cleaned, pools, allowPlain, loDigits, hiDigits)
 
 	c := &Corpus{pools: pools, templates: templates, input: map[string]bool{}}
 	seen := 0

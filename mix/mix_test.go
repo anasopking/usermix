@@ -433,3 +433,31 @@ func TestPossibleEstimatesBigCorpus(t *testing.T) {
 		t.Fatalf("Possible() = %d, want between 1 and Total() = %d", p, total)
 	}
 }
+
+func TestLearnDigitsFixedWidth(t *testing.T) {
+	for _, d := range []int{1, 2, 3} {
+		c := LearnDigits(seedNames(), false, d, d)
+		re := regexp.MustCompile(`^[a-z]+[0-9]{` + strconv.Itoa(d) + `}$`)
+		n := Generate(c, 10000, Options{Seed: 1}, func(name string) {
+			if !re.MatchString(name) {
+				t.Fatalf("digits=%d produced %q, want names then exactly %d digits", d, name, d)
+			}
+		})
+		if n == 0 {
+			t.Fatalf("digits=%d generated nothing", d)
+		}
+	}
+}
+
+func TestLearnDigitsNone(t *testing.T) {
+	c := LearnDigits(bigNames(5000), false, 0, 0)
+	re := regexp.MustCompile(`^[a-z]+$`)
+	n := Generate(c, 10000, Options{Seed: 1}, func(name string) {
+		if !re.MatchString(name) {
+			t.Fatalf("digits=0 produced %q, want whole names with no number", name)
+		}
+	})
+	if n == 0 {
+		t.Fatal("digits=0 generated nothing")
+	}
+}

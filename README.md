@@ -23,15 +23,17 @@ scripting; the plain command above is all you need otherwise.
 
 Prefer a window to a terminal? Run `./usermix gui`. It opens a page in your
 browser with a box for the usernames file, a box for how many to make, a
-Generate button, an optional email-domain box and a progress bar, and
-writes to `generated_<count>.txt` the same way.
+Generate button, a "digits at end" menu, an optional email-domain box and a
+progress bar, and writes to `generated_<count>.txt` the same way.
 
-Every username is 8 to 15 characters: two or three whole names run
-together with no connector (`_ - .`), then a random 1-to-3-digit number at
-the very end, like `kevinsmith45` or `mariagarcia7`. Never a number in the
-middle, never a connector, always a number at the end. The "possible"
-count is how many it can actually write after every filter below, shown
-short: `950`, `1.4M`, `22B`, `161T`.
+Every username is 8 to 15 characters: two or three whole names run together
+with no connector (`_ - .`), then a number at the very end, like
+`kevinsmith45` or `mariagarcia7`. Never a number in the middle, never a
+connector. By default the number is a random 1-to-3 digits; you can ask for
+exactly 1, 2 or 3 digits, or none at all (`kevinsmith`) — in the window's
+menu, the interactive prompt, or with `-digits`. The "possible" count is
+how many it can actually write after every filter below, shown short:
+`950`, `1.4M`, `22B`, `161T`.
 
 Want email addresses instead of bare handles? Give it a domain and every
 line comes out as `kevinsmith45@hotmail.com`: type one in the window's
@@ -57,9 +59,10 @@ What keeps the output looking real:
   times in your list to be pooled (20 times for a 3-letter one), so
   one-off mashes and scraps left over from splitting (`eh`, `jasm`) never
   get in.
-- **A random number on the end.** Every handle ends with a number that is
-  1, 2 or 3 digits long, chosen at random with the three lengths about
-  equally likely. The numbers are not taken from your list.
+- **A number on the end, your choice of length.** By default every handle
+  ends with a random number 1 to 3 digits long, the three lengths about
+  equally likely and the numbers not taken from your list. Ask for exactly
+  1, 2 or 3 digits, or for none, with `-digits`.
 
 ```
 mine.txt:        maria.garcia92, tobiaslindqvist, kevin_hollis, sara.ashby88
@@ -143,6 +146,7 @@ teaches a word.
 | `-allow-plain` | allow single-name-plus-number usernames like `john2005` |
 | `-workers` | CPU cores to use (0 = all) |
 | `-domain` | append `@DOMAIN` to every username, e.g. `-domain hotmail.com` |
+| `-digits` | digits to add at the end: `0` none, `1`, `2`, `3`, or `-1` for a random 1-3 (default) |
 | `-out` | file to write to (default: stdout) |
 
 If a pattern's combinations run out before `-n` is reached, usermix says

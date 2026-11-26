@@ -83,7 +83,22 @@ func interactive(in io.Reader, out io.Writer) error {
 		break
 	}
 
-	corpus := mix.Learn(names, false)
+	var lo, hi int
+	for {
+		s, err := ask(r, out, "Digits to add at the end (0 none, 1, 2 or 3, blank for random 1-3): ")
+		if err != nil {
+			return err
+		}
+		l, h, ok := parseDigits(s)
+		if !ok {
+			fmt.Fprintln(out, "Enter 0, 1, 2, 3, or leave it blank.")
+			continue
+		}
+		lo, hi = l, h
+		break
+	}
+
+	corpus := mix.LearnDigits(names, false, lo, hi)
 	if corpus.Possible() == 0 {
 		return errors.New("found no usable patterns in that file; try one with more usernames")
 	}
@@ -147,6 +162,36 @@ func interactive(in io.Reader, out io.Writer) error {
 	return nil
 }
 
+// digitRange turns a digits choice into the loDigits..hiDigits range for
+// mix.LearnDigits: -1 means a random 1-3 digit number (the default), 0 means
+// no trailing number, and 1, 2 or 3 means exactly that many digits. ok is
+// false for anything else.
+func digitRange(d int) (lo, hi int, ok bool) {
+	switch {
+	case d < 0:
+		return 1, 3, true
+	case d == 0:
+		return 0, 0, true
+	case d <= 3:
+		return d, d, true
+	}
+	return 0, 0, false
+}
+
+// parseDigits reads a user's digits answer: a blank one keeps the random 1-3
+// default, otherwise it must be 0, 1, 2 or 3.
+func parseDigits(s string) (lo, hi int, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return digitRange(-1)
+	}
+	d, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, 0, false
+	}
+	return digitRange(d)
+}
+
 // emailSuffix turns a user-typed domain into the "@domain" that gets
 // appended to every username, or "" for none. A leading "@" and any
 // surrounding whitespace are trimmed, so "hotmail.com" and "@hotmail.com"
@@ -192,10 +237,15 @@ func generate(args []string) error {
 	allowPlain := flags.Bool("allow-plain", false, "allow single-name-plus-number usernames like john2005 or oliver4006 (almost always already taken)")
 	workers := flags.Int("workers", 0, "CPU cores to use (0 = all)")
 	domain := flags.String("domain", "", "append @DOMAIN to every username, e.g. -domain hotmail.com")
+	digits := flags.Int("digits", -1, "digits to add at the end: 0 none, 1, 2 or 3, or -1 for a random 1-3")
 	out := flags.String("out", "", "file to write to (default: stdout)")
 	flags.Parse(args)
 	if flags.NArg() != 1 {
 		return errors.New("generate needs exactly one file of usernames (or - for stdin)")
+	}
+	lo, hi, ok := digitRange(*digits)
+	if !ok {
+		return errors.New("-digits must be 0, 1, 2, 3, or -1 for a random 1-3")
 	}
 
 	names, err := readNames(flags.Arg(0))
@@ -205,7 +255,7 @@ func generate(args []string) error {
 	if len(names) == 0 {
 		return fmt.Errorf("%s has no usernames", flags.Arg(0))
 	}
-	corpus := mix.Learn(names, *allowPlain)
+	corpus := mix.LearnDigits(names, *allowPlain, lo, hi)
 	if corpus.Possible() == 0 {
 		return errors.New("found no usable patterns; give usermix more usernames, or try -allow-plain")
 	}
@@ -238,9 +288,14 @@ func generate(args []string) error {
 func info(args []string) error {
 	flags := flag.NewFlagSet("info", flag.ExitOnError)
 	allowPlain := flags.Bool("allow-plain", false, "count single-name-plus-number patterns like john2005")
+	digits := flags.Int("digits", -1, "digits to add at the end: 0 none, 1, 2 or 3, or -1 for a random 1-3")
 	flags.Parse(args)
 	if flags.NArg() != 1 {
 		return errors.New("info needs exactly one file of usernames (or - for stdin)")
+	}
+	lo, hi, ok := digitRange(*digits)
+	if !ok {
+		return errors.New("-digits must be 0, 1, 2, 3, or -1 for a random 1-3")
 	}
 	names, err := readNames(flags.Arg(0))
 	if err != nil {
@@ -249,7 +304,7 @@ func info(args []string) error {
 	if len(names) == 0 {
 		return fmt.Errorf("%s has no usernames", flags.Arg(0))
 	}
-	corpus := mix.Learn(names, *allowPlain)
+	corpus := mix.LearnDigits(names, *allowPlain, lo, hi)
 	fmt.Printf("Usernames read     %s\n", formatCount(len(names)))
 	fmt.Printf("Patterns found     %s\n", formatCount(len(corpus.Templates())))
 	fmt.Printf("Usernames possible %s\n", formatShort(corpus.Possible()))
