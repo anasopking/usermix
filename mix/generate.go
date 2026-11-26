@@ -12,7 +12,8 @@ import (
 type Corpus struct {
 	pools     *Pools
 	templates []Template
-	bounds    []uint64 // cumulative total, exclusive upper bound, one per template
+	cells     []*cell  // every template's cells, one after another
+	bounds    []uint64 // cumulative total, exclusive upper bound, one per cell
 	total     uint64   // sum of every template's combinations
 	input     map[string]bool
 }
@@ -31,24 +32,24 @@ func Learn(names []string, allowPlain bool) *Corpus {
 	templates := Templates(refined, pools, allowPlain)
 
 	c := &Corpus{pools: pools, templates: templates, input: map[string]bool{}}
-	c.bounds = make([]uint64, len(templates))
 	var total uint64
-	for i, t := range templates {
-		total = satAdd(total, t.total)
-		c.bounds[i] = total
+	for ti := range c.templates {
+		for ci := range c.templates[ti].cells {
+			cl := &c.templates[ti].cells[ci]
+			if total+cl.total > maxTotal {
+				continue // past the cap; see maxTotal
+			}
+			cl.tmpl = ti
+			total += cl.total
+			c.cells = append(c.cells, cl)
+			c.bounds = append(c.bounds, total)
+		}
 	}
 	c.total = total
 	for _, n := range names {
 		c.input[strings.ToLower(n)] = true
 	}
 	return c
-}
-
-func satAdd(a, b uint64) uint64 {
-	if a+b < a { // overflow
-		return ^uint64(0)
-	}
-	return a + b
 }
 
 // Total is how many distinct usernames this corpus can produce (before
@@ -65,7 +66,8 @@ func (c *Corpus) decode(idx uint64) string {
 	if i > 0 {
 		lower = c.bounds[i-1]
 	}
-	return c.templates[i].decode(idx-lower, c.pools)
+	cl := c.cells[i]
+	return cl.decode(c.templates[cl.tmpl].shape, idx-lower, c.pools)
 }
 
 // Options controls Generate.

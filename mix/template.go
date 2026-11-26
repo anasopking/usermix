@@ -8,8 +8,14 @@ import "sort"
 type Template struct {
 	shape []Shape
 	seen  int    // how many input usernames had this shape
-	total uint64 // combinations this shape can produce from pools
+	total uint64 // combinations this shape can produce from pools within MinLen..MaxLen
+	cells []cell
 }
+
+// maxTotal caps how many combinations a corpus counts, far beyond anything
+// that could ever be generated, so sums and products of pool sizes can
+// never overflow uint64. Combinations past the cap are skipped.
+const maxTotal = uint64(1) << 62
 
 // Templates extracts every distinct structural pattern among names'
 // refined segments (see Vocab.refine), with each one's size: the number of
@@ -33,7 +39,8 @@ func Templates(refined [][]Segment, pools *Pools, allowPlain bool) []Template {
 			t.seen++
 			continue
 		}
-		t := &Template{shape: shape, seen: 1, total: size(shape, pools)}
+		t := &Template{shape: shape, seen: 1}
+		t.cells, t.total = cellsOf(shape, pools)
 		seen[key] = t
 		order = append(order, key)
 	}
@@ -44,7 +51,7 @@ func Templates(refined [][]Segment, pools *Pools, allowPlain bool) []Template {
 			templates = append(templates, *t)
 		}
 	}
-	sort.Slice(templates, func(i, j int) bool { return templates[i].total > templates[j].total })
+	sort.SliceStable(templates, func(i, j int) bool { return templates[i].total > templates[j].total })
 	return templates
 }
 
@@ -65,28 +72,63 @@ func shapeKey(shape []Shape) string {
 	return string(b)
 }
 
-// size is the product of every slot's pool size: how many distinct
-// usernames this shape can produce.
-func size(shape []Shape, pools *Pools) uint64 {
-	total := uint64(1)
-	for _, s := range shape {
-		n := slotSize(s, pools)
-		if n == 0 {
-			return 0
+// cellsOf splits shape's combinations by the length of each slot and
+// keeps only the length choices that add up to MinLen..MaxLen, so a big
+// shape (three words and a number, say) contributes just the combinations
+// that fit instead of billions that are all too long. It returns the cells
+// and their combined size, capped at maxTotal.
+func cellsOf(shape []Shape, pools *Pools) ([]cell, uint64) {
+	k := len(shape)
+	opts := make([][]lenBucket, k)
+	for i, s := range shape {
+		opts[i] = pools.buckets(s)
+		if len(opts[i]) == 0 {
+			return nil, 0
 		}
-		total *= n // see note in Generate on overflow: pools this large don't occur in practice
 	}
-	return total
-}
+	// minRest[i] / maxRest[i]: the shortest / longest slots i..k-1 can be.
+	minRest, maxRest := make([]int, k+1), make([]int, k+1)
+	for i := k - 1; i >= 0; i-- {
+		minRest[i] = minRest[i+1] + opts[i][0].length
+		maxRest[i] = maxRest[i+1] + opts[i][len(opts[i])-1].length
+	}
+	if minRest[0] > MaxLen || maxRest[0] < MinLen {
+		return nil, 0
+	}
 
-func slotSize(s Shape, pools *Pools) uint64 {
-	switch s.Kind {
-	case Word:
-		return uint64(len(pools.wordPool(s.Lead)))
-	case Number:
-		return pools.numberPoolSize()
-	case Separator:
-		return uint64(len(pools.seps))
+	var cells []cell
+	var total uint64
+	lens := make([]uint8, k)
+	radix := make([]uint64, k)
+	var walk func(i, used int, product uint64)
+	walk = func(i, used int, product uint64) {
+		if i == k {
+			if total+product > maxTotal {
+				return
+			}
+			total += product
+			cells = append(cells, cell{
+				lens:  append([]uint8(nil), lens...),
+				radix: append([]uint64(nil), radix...),
+				total: product,
+			})
+			return
+		}
+		for _, b := range opts[i] {
+			n := used + b.length
+			if n+minRest[i+1] > MaxLen {
+				break // buckets are shortest first; the rest are longer still
+			}
+			if n+maxRest[i+1] < MinLen {
+				continue
+			}
+			if product > maxTotal/b.size {
+				continue // would overflow the cap
+			}
+			lens[i], radix[i] = uint8(b.length), b.size
+			walk(i+1, n, product*b.size)
+		}
 	}
-	return 0
+	walk(0, 0, 1)
+	return cells, total
 }

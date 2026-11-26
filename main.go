@@ -270,7 +270,7 @@ func openOutput(path string) (io.Writer, func() error, error) {
 
 // formatCount writes n with thousands separators.
 func formatCount[T int | uint64](n T) string {
-	s := strconv.FormatInt(int64(n), 10)
+	s := strconv.FormatUint(uint64(n), 10)
 	for i := len(s) - 3; i > 0; i -= 3 {
 		s = s[:i] + "," + s[i:]
 	}

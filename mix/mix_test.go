@@ -113,10 +113,10 @@ func TestAllowPlainOptIn(t *testing.T) {
 
 func TestGenerateIsDuplicateFree(t *testing.T) {
 	c := Learn(seedNames(), false)
-	if c.Total() < 200000 {
+	if c.Total() < 60000 {
 		t.Fatalf("test corpus too small: %d combinations", c.Total())
 	}
-	const n = 50000
+	const n = 20000
 	seen := make(map[string]bool, n)
 	input := map[string]bool{}
 	for _, name := range seedNames() {
@@ -209,5 +209,105 @@ func TestLearnWithNoUsableInputReturnsEmptyCorpus(t *testing.T) {
 	n := Generate(c, 100, Options{Seed: 1}, func(string) { t.Fatal("should not emit anything") })
 	if n != 0 {
 		t.Fatalf("got %d, want 0", n)
+	}
+}
+
+// bigNames builds a varied list of tens of thousands of usernames with
+// long words and mixed separators, so most raw combinations of the bigger
+// patterns would be over MaxLen.
+func bigNames(count int) []string {
+	const cons, vow = "bcdfghjklmnprstvwz", "aeiou"
+	x := uint64(99)
+	next := func(n int) int { x = splitmix64(x); return int(x % uint64(n)) }
+	word := func(lo, hi int) string {
+		n := lo + next(hi-lo+1)
+		b := make([]byte, 0, n+1)
+		for len(b) < n {
+			b = append(b, cons[next(len(cons))], vow[next(len(vow))])
+		}
+		return string(b[:n])
+	}
+	seps := []string{"_", ".", "-"}
+	out := make([]string, 0, count)
+	for len(out) < count {
+		f, m, l := word(3, 8), word(3, 7), word(4, 10)
+		num := strconv.Itoa(next(3000))
+		sep := seps[next(3)]
+		switch next(6) {
+		case 0:
+			out = append(out, f+sep+l)
+		case 1:
+			out = append(out, f+sep+l+num)
+		case 2:
+			out = append(out, f+sep+m+sep+l+sep+num)
+		case 3:
+			out = append(out, strings.ToUpper(f[:1])+f[1:]+strings.ToUpper(m[:1])+m[1:]+strings.ToUpper(l[:1])+l[1:]+num)
+		case 4:
+			out = append(out, f+sep+l+sep+num)
+		default:
+			out = append(out, f+m+sep+l)
+		}
+	}
+	return out
+}
+
+func TestEveryCombinationFitsLengthLimits(t *testing.T) {
+	c := Learn(bigNames(20000), false)
+	if c.Total() == 0 {
+		t.Fatal("expected combinations")
+	}
+	f := newFeistel(c.Total(), 5)
+	for i := uint64(0); i < 200000 && i < c.Total(); i++ {
+		name := c.decode(f.permute(i))
+		if n := len([]rune(name)); n < MinLen || n > MaxLen {
+			t.Fatalf("decoded %q has %d characters, want %d..%d", name, n, MinLen, MaxLen)
+		}
+	}
+}
+
+func TestBigInputGeneratesQuickly(t *testing.T) {
+	c := Learn(bigNames(100000), false)
+	if c.Total() == 0 || c.Total() > maxTotal {
+		t.Fatalf("total %d out of range", c.Total())
+	}
+	const n = 200000
+	var tried uint64
+	seen := make(map[string]bool, n)
+	got := Generate(c, n, Options{Seed: 3, Progress: func(_, raw uint64) { tried = raw }}, func(name string) {
+		if seen[name] {
+			t.Fatalf("duplicate output: %q", name)
+		}
+		seen[name] = true
+	})
+	if got != n {
+		t.Fatalf("got %d usernames, want %d", got, n)
+	}
+	// Nearly every raw combination should now be usable; before length
+	// cells, almost all of them were too long and thrown away.
+	if tried > 4*n {
+		t.Fatalf("tried %d raw combinations for %d usernames; too many rejected", tried, n)
+	}
+}
+
+func TestHugePoolsDoNotOverflow(t *testing.T) {
+	p := &Pools{numbers: map[int]numberRange{}}
+	big := make([]string, 1<<20)
+	for i := range big {
+		big[i] = "abc" // only the pool sizes matter here: 4 slots of 2^20 is 2^80
+	}
+	p.leads, p.tails, p.seps = big, big, []string{"_"}
+	p.leadsByLen, p.tailsByLen, p.sepsByLen = byLength(p.leads), byLength(p.tails), byLength(p.seps)
+	p.leadBuckets, p.tailBuckets, p.sepBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen), bucketsOf(p.sepsByLen)
+	shape := []Shape{{Kind: Word, Lead: true}, {Kind: Word}, {Kind: Word}, {Kind: Word}, {Kind: Separator}}
+	cells, total := cellsOf(shape, p)
+	if total > maxTotal {
+		t.Fatalf("total %d exceeds cap", total)
+	}
+	var sum uint64
+	for _, cl := range cells {
+		sum += cl.total
+	}
+	if sum != total {
+		t.Fatalf("cells sum to %d, total says %d", sum, total)
 	}
 }

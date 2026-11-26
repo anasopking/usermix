@@ -26,6 +26,12 @@ type Pools struct {
 	// number could be reached by two different combinations, and so could
 	// the username built around it.
 	numbers map[int]numberRange
+
+	// The same pools split by length in characters (numbers are already
+	// split by digit count above), so combinations can be built to land
+	// inside MinLen..MaxLen instead of being tried and thrown away.
+	leadsByLen, tailsByLen, sepsByLen    map[int][]string
+	leadBuckets, tailBuckets, sepBuckets []lenBucket
 }
 
 type numberRange struct {
@@ -73,6 +79,8 @@ func LearnPools(refined [][]Segment) *Pools {
 	p.leads = sortedKeys(leadSet)
 	p.tails = sortedKeys(tailSet)
 	p.seps = sortedKeys(sepSet)
+	p.leadsByLen, p.tailsByLen, p.sepsByLen = byLength(p.leads), byLength(p.tails), byLength(p.seps)
+	p.leadBuckets, p.tailBuckets, p.sepBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen), bucketsOf(p.sepsByLen)
 	for digits, ns := range numSeen {
 		lo, hi := ns[0], ns[0]
 		for _, n := range ns {
@@ -92,48 +100,72 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
-// wordPool returns the lead or tail pool.
-func (p *Pools) wordPool(lead bool) []string {
-	if lead {
-		return p.leads
-	}
-	return p.tails
+// lenBucket is every entry of one slot's pool that has the same length in
+// characters: a slot filled only from one bucket always adds exactly that
+// many characters to the username.
+type lenBucket struct {
+	length int
+	size   uint64
 }
 
-// digitGroups lists p.numbers' keys in a fixed order, so number slots can
-// be indexed into a single flat pool: every learned digit-length's range,
-// one after another. A slot drawing from this pool can land on any digit
-// length (a 2-digit number here, a 4-digit one there), which is how real
-// usernames vary and multiplies how many numbers are available far beyond
-// what a single length's range alone would give.
-func (p *Pools) digitGroups() []int {
-	groups := make([]int, 0, len(p.numbers))
-	for k := range p.numbers {
-		groups = append(groups, k)
+// byLength groups words (already sorted) by length in characters, keeping
+// their order within each length.
+func byLength(words []string) map[int][]string {
+	m := map[int][]string{}
+	for _, w := range words {
+		n := len([]rune(w))
+		m[n] = append(m[n], w)
 	}
-	sort.Ints(groups)
-	return groups
+	return m
 }
 
-// numberPoolSize is the combined size of every digit length's range.
-func (p *Pools) numberPoolSize() uint64 {
-	var total uint64
-	for _, digits := range p.digitGroups() {
-		total += p.numbers[digits].size()
+func bucketsOf(m map[int][]string) []lenBucket {
+	out := make([]lenBucket, 0, len(m))
+	for l, ws := range m {
+		out = append(out, lenBucket{l, uint64(len(ws))})
 	}
-	return total
+	sort.Slice(out, func(i, j int) bool { return out[i].length < out[j].length })
+	return out
 }
 
-// numberAt returns the idx'th number in the flat pool numberPoolSize
-// describes (idx < numberPoolSize()).
-func (p *Pools) numberAt(idx uint64) string {
-	for _, digits := range p.digitGroups() {
-		nr := p.numbers[digits]
-		size := nr.size()
-		if idx < size {
-			return nr.format(int(idx))
+// buckets lists a slot's pool split by length, shortest first. Numbers
+// longer than maxDigitRun digits are left out: Garbage rejects every
+// username containing one, so they could never be used.
+func (p *Pools) buckets(s Shape) []lenBucket {
+	switch s.Kind {
+	case Word:
+		if s.Lead {
+			return p.leadBuckets
 		}
-		idx -= size
+		return p.tailBuckets
+	case Separator:
+		return p.sepBuckets
+	case Number:
+		var out []lenBucket
+		for width, nr := range p.numbers {
+			if width <= maxDigitRun {
+				out = append(out, lenBucket{width, nr.size()})
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].length < out[j].length })
+		return out
 	}
-	return "" // unreachable if idx < numberPoolSize()
+	return nil
+}
+
+// pick returns the idx'th entry of the slot's pool among entries of the
+// given length (idx < that bucket's size).
+func (p *Pools) pick(s Shape, length int, idx uint64) string {
+	switch s.Kind {
+	case Word:
+		if s.Lead {
+			return p.leadsByLen[length][idx]
+		}
+		return p.tailsByLen[length][idx]
+	case Separator:
+		return p.sepsByLen[length][idx]
+	case Number:
+		return p.numbers[length].format(int(idx))
+	}
+	return ""
 }
