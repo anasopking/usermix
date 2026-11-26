@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/anasopking/usermix/mix"
@@ -29,8 +30,11 @@ Run "usermix <command> -h" for a command's flags.
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		if err := interactive(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "usermix:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	var err error
 	switch cmd, args := os.Args[1], os.Args[2:]; cmd {
@@ -48,6 +52,113 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "usermix:", err)
 		os.Exit(1)
+	}
+}
+
+// interactive runs usermix with no setup: it asks for a file of usernames
+// and how many to generate, then writes generated_<count>.txt while
+// showing progress. Nothing else: no menu, no settings.
+func interactive(in io.Reader, out io.Writer) error {
+	r := bufio.NewReader(in)
+
+	var names []string
+	for {
+		path, err := ask(r, out, "Usernames file: ")
+		if err != nil {
+			return err
+		}
+		names, err = readNames(path)
+		if err != nil {
+			fmt.Fprintf(out, "Can't read that: %s\n", err)
+			continue
+		}
+		if len(names) == 0 {
+			fmt.Fprintf(out, "%s has no usernames in it.\n", path)
+			continue
+		}
+		break
+	}
+
+	corpus := mix.Learn(names, false)
+	if corpus.Total() == 0 {
+		return errors.New("found no usable patterns in that file; try one with more usernames")
+	}
+	fmt.Fprintf(out, "Learned from %s usernames; %s possible from them.\n",
+		formatCount(len(names)), formatCount(corpus.Total()))
+
+	var n uint64
+	for {
+		s, err := ask(r, out, "How many usernames to generate: ")
+		if err != nil {
+			return err
+		}
+		v, err := strconv.ParseUint(s, 10, 64)
+		if err != nil || v == 0 {
+			fmt.Fprintln(out, "Enter a whole number above 0.")
+			continue
+		}
+		n = v
+		break
+	}
+
+	tmp, err := os.CreateTemp(".", ".usermix-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op once renamed
+	bw := bufio.NewWriterSize(tmp, 1<<20)
+
+	bar := newProgressBar(out, n)
+	start := time.Now()
+	written := mix.Generate(corpus, n, mix.Options{
+		Progress: func(found, _ uint64) { bar.draw(found) },
+	}, func(name string) {
+		bw.WriteString(name)
+		bw.WriteByte('\n')
+	})
+	bar.finish(written)
+	if err := bw.Flush(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	path, err := placeNumbered(tmp.Name(), "generated", written)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Wrote %s usernames to %s in %s.\n",
+		formatCount(written), path, time.Since(start).Round(100*time.Millisecond))
+	if written < n {
+		fmt.Fprintln(out, "That's fewer than asked for; give usermix more or more varied usernames for a bigger pool.")
+	}
+	return nil
+}
+
+func ask(r *bufio.Reader, out io.Writer, prompt string) (string, error) {
+	fmt.Fprint(out, prompt)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// placeNumbered gives tmp its final name, <prefix>_<count>.txt, never
+// overwriting: if that name exists it tries <prefix>_<count>_2.txt, and so
+// on.
+func placeNumbered(tmp, prefix string, count uint64) (string, error) {
+	for i := 1; ; i++ {
+		name := fmt.Sprintf("%s_%d.txt", prefix, count)
+		if i > 1 {
+			name = fmt.Sprintf("%s_%d_%d.txt", prefix, count, i)
+		}
+		if _, err := os.Lstat(name); errors.Is(err, os.ErrNotExist) {
+			return name, os.Rename(tmp, name)
+		} else if err != nil {
+			return "", err
+		}
 	}
 }
 

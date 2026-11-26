@@ -6,15 +6,20 @@ with nothing built in.
 
 ```sh
 go build -o usermix .
-./usermix generate -n 1000000000 mine.txt > generated.txt
+./usermix
 ```
 
 ```
-$ ./usermix info mine.txt
-Usernames read     1,000,000
-Patterns found     4
-Usernames possible 476,091,132,000
+Usermix file: mine.txt
+Learned from 1,000,000 usernames; 476,091,132,000 possible from them.
+How many usernames to generate: 1000000000
+Generating [##############################] 100% (1,000,000,000/1,000,000,000)
+Wrote 1,000,000,000 usernames to generated_1000000000.txt in 7m47s.
 ```
+
+That's the whole interface: a file, a count, a progress bar, and a numbered
+output file it never overwrites. Flags and subcommands below are there for
+scripting; the plain command above is all you need otherwise.
 
 ## What it does
 

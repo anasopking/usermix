@@ -73,6 +73,11 @@ type Options struct {
 	Seed       uint64 // 0 picks a random one
 	AllowPlain bool   // see Templates; only takes effect via Learn, kept here for the CLI
 	Workers    int    // 0 means every CPU core
+
+	// Progress, if non-nil, is called as usernames are found and as raw
+	// combinations are worked through, so a caller can draw a progress
+	// bar. found and triedRaw are both cumulative and only ever increase.
+	Progress func(found, triedRaw uint64)
 }
 
 // Generate streams up to n distinct new usernames to emit, using every CPU
@@ -157,6 +162,9 @@ func Generate(c *Corpus, n uint64, opts Options, emit func(string)) uint64 {
 			}
 			emit(name)
 			total++
+		}
+		if opts.Progress != nil {
+			opts.Progress(total, b.end)
 		}
 		if total >= n {
 			close(cancel)
