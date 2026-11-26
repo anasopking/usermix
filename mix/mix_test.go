@@ -91,16 +91,16 @@ func wordsIn(c *Corpus, name string) (int, string) {
 	return 0, name[i:]
 }
 
-var lettersThenNumber = regexp.MustCompile(`^[a-z]+[0-9]{0,4}$`)
+var namesThenDigits = regexp.MustCompile(`^[a-z]+[0-9]{1,3}$`)
 
-func TestOutputIsNamesThenOptionalNumber(t *testing.T) {
-	// Every username is two or three whole words with no connector, then
-	// at most one number, at the very end: never "john2005" (one name and
-	// a number), never "kevin45smith", never "maria.garcia".
+func TestOutputIsNamesThenRandomDigits(t *testing.T) {
+	// Every username is two or three whole words with no connector, then a
+	// 1-to-3-digit number at the very end: never "kevin45smith", never
+	// "maria.garcia", and never a bare name with no number.
 	c := Learn(seedNames(), false)
 	n := Generate(c, 20000, Options{Seed: 1}, func(name string) {
-		if !lettersThenNumber.MatchString(name) {
-			t.Fatalf("%q is not letters then an optional trailing number", name)
+		if !namesThenDigits.MatchString(name) {
+			t.Fatalf("%q is not whole names then a 1-3 digit number", name)
 		}
 		if k, _ := wordsIn(c, name); k < 2 {
 			t.Fatalf("%q is not made of two or more whole words (got %d)", name, k)
@@ -111,16 +111,38 @@ func TestOutputIsNamesThenOptionalNumber(t *testing.T) {
 	}
 }
 
-func TestNumbersOnlyComeFromRealEndings(t *testing.T) {
-	// A number in the middle of an input name ("kevin45smith") neither
-	// makes a pattern nor feeds the number pool.
+func TestTrailingNumberIsNotTakenFromInput(t *testing.T) {
+	// Numbers are random, not learned: a 4-digit year the whole input ends
+	// with is never reproduced (too long), and a number buried mid-name is
+	// never used either.
 	names := append(seedNames(), "kevin4242smith", "maria4242garcia")
+	for i := range names {
+		names[i] = names[i] + "1998"
+	}
 	c := Learn(names, false)
 	Generate(c, 20000, Options{Seed: 2}, func(name string) {
-		if strings.Contains(name, "4242") {
-			t.Fatalf("%q uses a number only ever seen mid-name", name)
+		if strings.Contains(name, "1998") || strings.Contains(name, "4242") {
+			t.Fatalf("%q reused a number from the input", name)
 		}
 	})
+}
+
+func TestDigitWidthsAreRoughlyEven(t *testing.T) {
+	// Each username ends with 1, 2 or 3 digits, and the three lengths show
+	// up in similar amounts rather than mostly the longest.
+	c := Learn(bigNames(20000), false)
+	var byWidth [4]int
+	total := 0
+	Generate(c, 30000, Options{Seed: 7}, func(name string) {
+		_, num := wordsIn(c, name)
+		byWidth[len(num)]++
+		total++
+	})
+	for d := 1; d <= 3; d++ {
+		if share := float64(byWidth[d]) / float64(total); share < 0.2 {
+			t.Fatalf("%d-digit endings are %.2f of output, want a roughly even share", d, share)
+		}
+	}
 }
 
 func TestAllowPlainOptIn(t *testing.T) {
@@ -136,32 +158,32 @@ func TestAllowPlainOptIn(t *testing.T) {
 	}
 }
 
-func TestOutputFollowsInputPatternMix(t *testing.T) {
-	// Three quarters of the input is two names with no number, a quarter
-	// is two names and a 2-digit number; the output should match, however
-	// many more combinations the numbered pattern allows.
+func TestWordShapeMixFollowsInput(t *testing.T) {
+	// Whichever word shapes the input favours, the output favours too:
+	// here two-word names outnumber three-word ones nine to one, so most
+	// output should be two words (before the trailing number).
 	firsts := []string{"maria", "john", "kevin", "oliver", "sara", "tobias", "ines", "yusuf", "greta", "amir"}
 	lasts := []string{"garcia", "smith", "lindqvist", "hollis", "carter", "thorne", "quigley", "ashby", "okafor", "winslow"}
+	mids := []string{"rose", "lee", "jane", "max", "kai"}
 	var names []string
 	for i, f := range firsts {
 		for j, l := range lasts {
 			names = append(names, f+"_"+l)
-			if (i+j)%3 == 0 {
-				names = append(names, fmt.Sprintf("%s.%s%02d", f, l, 10+(i*10+j)%40))
+			if (i+j)%10 == 0 {
+				names = append(names, f+"_"+mids[j%len(mids)]+"_"+l)
 			}
 		}
 	}
 	c := Learn(names, false)
-	var withNum, all float64
-	Generate(c, 3000, Options{Seed: 9}, func(name string) {
+	var two, all float64
+	Generate(c, 4000, Options{Seed: 9}, func(name string) {
 		all++
-		if _, num := wordsIn(c, name); num != "" {
-			withNum++
+		if k, _ := wordsIn(c, name); k == 2 {
+			two++
 		}
 	})
-	want := float64(len(names)-100) / float64(len(names))
-	if got := withNum / all; got < want-0.05 || got > want+0.05 {
-		t.Fatalf("%.2f of output has a number, want about %.2f like the input", got, want)
+	if got := two / all; got < 0.8 {
+		t.Fatalf("%.2f of output is two words, want most of it like the input", got)
 	}
 }
 

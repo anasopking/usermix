@@ -21,63 +21,65 @@ const maxTotal = uint64(1) << 62
 // than three run-together words stops reading as a name.
 const maxWords = 3
 
-// Templates extracts every usable structural pattern among names' cleaned
-// segments (see clean), with how many input names follow each and how many
-// combinations it can produce. Usable means letters first and at most one
-// number, at the very end: kevinsmith45, never kevin45smith. It also means
-// at least two words, so a bare name on its own ("oliver") or a bare name
-// plus a number ("john2005", almost always already taken) is never made;
-// allowPlain lets the second back in.
+// Templates extracts the name shapes among names' cleaned segments (see
+// clean) — the number of whole words run together, 2 or 3 — and turns each
+// into one pattern per trailing-number length (see minDigits..maxDigits),
+// so every generated username is those words followed by a random number of
+// that many digits. A bare name with no number is never made; allowPlain
+// lets a single name plus a number ("john2005") back in. Each shape's input
+// count is split evenly across the digit lengths, so short and long numbers
+// appear about equally often whatever the input's own numbers were.
 func Templates(cleaned [][]Segment, pools *Pools, allowPlain bool) []Template {
-	seen := map[string]*Template{}
+	seen := map[string]int{}
+	base := map[string][]Shape{}
 	var order []string
 	for _, segs := range cleaned {
-		if !usable(segs, allowPlain) {
+		words, ok := nameShape(segs, allowPlain)
+		if !ok {
 			continue
 		}
-		shape := shapeOf(segs)
-		key := shapeKey(shape)
-		if t, ok := seen[key]; ok {
-			t.seen++
-			continue
+		key := shapeKey(words)
+		if _, ok := base[key]; !ok {
+			base[key] = words
+			order = append(order, key)
 		}
-		t := &Template{shape: shape, seen: 1}
-		t.cells, t.total = cellsOf(shape, pools)
-		seen[key] = t
-		order = append(order, key)
+		seen[key]++
 	}
-	templates := make([]Template, 0, len(order))
+	var templates []Template
 	for _, key := range order {
-		t := seen[key]
-		if t.total > 0 {
-			templates = append(templates, *t)
+		for d := minDigits; d <= maxDigits; d++ {
+			shape := append(append([]Shape(nil), base[key]...), Shape{Kind: Number, Width: d})
+			t := Template{shape: shape, seen: seen[key]}
+			t.cells, t.total = cellsOf(shape, pools)
+			if t.total > 0 {
+				templates = append(templates, t)
+			}
 		}
 	}
 	sort.SliceStable(templates, func(i, j int) bool { return templates[i].seen > templates[j].seen })
 	return templates
 }
 
-func usable(segs []Segment, allowPlain bool) bool {
-	words := 0
-	for i, seg := range segs {
-		switch seg.Kind {
-		case Word:
-			words++
-		case Number:
-			if i != len(segs)-1 || len(seg.Text) > maxDigitRun {
-				return false
-			}
-		default:
-			return false
+// nameShape returns segs' word slots (its shape without any number) when
+// segs is a usable name: whole words run together with an optional trailing
+// number and nothing else. Two or three words, or a single word only when
+// allowPlain is set.
+func nameShape(segs []Segment, allowPlain bool) ([]Shape, bool) {
+	end := len(segs)
+	if end > 0 && segs[end-1].Kind == Number {
+		end-- // the input's own trailing number is dropped; we add our own
+	}
+	words := segs[:end]
+	for _, seg := range words {
+		if seg.Kind != Word {
+			return nil, false // a connector or a number anywhere but the end
 		}
 	}
-	if words > maxWords || words == 0 {
-		return false
+	n := len(words)
+	if n == 0 || n > maxWords || (n == 1 && !allowPlain) {
+		return nil, false
 	}
-	if words == 1 {
-		return allowPlain && len(segs) == 2
-	}
-	return true
+	return shapeOf(words), true
 }
 
 func shapeKey(shape []Shape) string {
