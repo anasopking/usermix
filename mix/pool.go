@@ -2,6 +2,7 @@ package mix
 
 import (
 	"sort"
+	"strconv"
 	"unicode/utf8"
 )
 
@@ -9,13 +10,15 @@ import (
 // kept separately by the role it plays, so recombination only puts a part
 // back where a part like it belongs.
 //
-// Only parts that look like real parts of real names make it in. A word
-// has to be letters only, at least minWordLen long, and used at least
-// minSeen times across the input in that role; a one-off is far more often
-// a keyboard mash or a scrap left over from splitting one ("eh", "nh")
-// than a name. A number has to be one real usernames actually end with at
-// least minSeen times, so the pool is 07, 22, 1998 and the like rather
-// than every 3-digit value.
+// Only words that look like real parts of real names make it in: letters
+// only, at least minWordLen long, and used at least minSeen times across
+// the input in that role; a one-off is far more often a keyboard mash or a
+// scrap left over from splitting one ("eh", "nh") than a name.
+//
+// Numbers are not learned from the input at all. Every generated username
+// ends with a random number of minDigits..maxDigits digits, drawn from the
+// full range of each length, so the pool is filled synthetically (see
+// fillRandomNumbers).
 type Pools struct {
 	lead, tail map[string]bool // the pooled words, for checking splits
 
@@ -34,33 +37,29 @@ const (
 	// word has to be seen this often to be pooled.
 	minSeenShort = 20
 
-	// numberCoverage keeps, for each digit count, only the most common
-	// endings that together cover this share of the input's endings of
-	// that length. Every pooled number is picked equally often, so a long
-	// tail of one-off numbers (0985, 4417) would otherwise drown out the
-	// years and favourites (1998, 2000, 786, 123) real names mostly use.
-	numberCoverage = 0.5
+	// Every username ends with a random number this many digits long. The
+	// digits are not taken from the input: minDigits-digit numbers run
+	// 0..9, and longer ones run without a leading zero (10..99, 100..999),
+	// so each number is a distinct string and no two combinations collide.
+	minDigits = 1
+	maxDigits = 3
 )
 
 // LearnPools builds Pools from names' cleaned segments (see clean).
 func LearnPools(cleaned [][]Segment) *Pools {
-	leadSeen, tailSeen, numSeen := map[string]int{}, map[string]int{}, map[string]int{}
+	leadSeen, tailSeen := map[string]int{}, map[string]int{}
 	for _, segs := range cleaned {
 		lead := true
-		for i, seg := range segs {
-			switch seg.Kind {
-			case Word:
-				if lead {
-					leadSeen[seg.Text]++
-				} else {
-					tailSeen[seg.Text]++
-				}
-				lead = false
-			case Number:
-				if i == len(segs)-1 && i > 0 {
-					numSeen[seg.Text]++
-				}
+		for _, seg := range segs {
+			if seg.Kind != Word {
+				continue
 			}
+			if lead {
+				leadSeen[seg.Text]++
+			} else {
+				tailSeen[seg.Text]++
+			}
+			lead = false
 		}
 	}
 
@@ -80,31 +79,35 @@ func LearnPools(cleaned [][]Segment) *Pools {
 	keepWords(tailSeen, p.tail)
 	p.leadsByLen, p.tailsByLen = byLength(sortedKeys(p.lead)), byLength(sortedKeys(p.tail))
 	p.leadBuckets, p.tailBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen)
+	p.fillRandomNumbers()
+	return p
+}
 
-	byWidth := map[int][]string{}
-	occurrences := map[int]int{}
-	for num, n := range numSeen {
-		if len(num) <= maxDigitRun {
-			byWidth[len(num)] = append(byWidth[len(num)], num)
-			occurrences[len(num)] += n
+// fillRandomNumbers stocks the number pool with every number of
+// minDigits..maxDigits digits: 0..9 for the shortest length, then without a
+// leading zero (10..99, 100..999) for longer ones so each number is a
+// distinct string of its own length. This is what makes every username end
+// with a random 1-to-3-digit number rather than one copied from the input.
+func (p *Pools) fillRandomNumbers() {
+	p.numbers = map[int][]string{}
+	for d := minDigits; d <= maxDigits; d++ {
+		lo := 0
+		if d > 1 {
+			lo = pow10(d - 1)
 		}
+		hi := pow10(d) - 1
+		nums := make([]string, 0, hi-lo+1)
+		for n := lo; n <= hi; n++ {
+			nums = append(nums, strconv.Itoa(n))
+		}
+		p.numbers[d] = nums
 	}
-	for width, nums := range byWidth {
-		sort.Slice(nums, func(i, j int) bool {
-			if numSeen[nums[i]] != numSeen[nums[j]] {
-				return numSeen[nums[i]] > numSeen[nums[j]]
-			}
-			return nums[i] < nums[j]
-		})
-		covered := 0
-		for _, num := range nums {
-			if numSeen[num] < minSeen || float64(covered) >= numberCoverage*float64(occurrences[width]) {
-				break
-			}
-			covered += numSeen[num]
-			p.numbers[width] = append(p.numbers[width], num)
-		}
-		sort.Strings(p.numbers[width])
+}
+
+func pow10(n int) int {
+	p := 1
+	for ; n > 0; n-- {
+		p *= 10
 	}
 	return p
 }
