@@ -16,17 +16,30 @@ type cell struct {
 
 // decode turns a combination index (0 <= idx < c.total) into the username
 // it names: each slot's share of idx (mixed-radix, least significant slot
-// last) picks that slot's entry among pool entries of its length.
-func (c *cell) decode(shape []Shape, idx uint64, pools *Pools) string {
-	digits := make([]uint64, len(shape))
+// last) picks that slot's entry among pool entries of its length. ok is
+// false when the words picked spell letters that another combination
+// spells too and this one isn't the canonical way (see Pools.canonical),
+// so every username has exactly one combination that produces it.
+func (c *cell) decode(shape []Shape, idx uint64, pools *Pools) (name string, ok bool) {
+	var digits [maxWords + 1]uint64
 	for i := len(shape) - 1; i >= 0; i-- {
 		digits[i] = idx % c.radix[i]
 		idx /= c.radix[i]
 	}
+	var parts [maxWords]string
+	nwords := 0
 	var b strings.Builder
-	b.Grow(MaxLen)
+	b.Grow(MaxLen + 8)
 	for i, s := range shape {
-		b.WriteString(pools.pick(s, int(c.lens[i]), digits[i]))
+		part := pools.pick(s, int(c.lens[i]), digits[i])
+		if s.Kind == Word {
+			parts[nwords] = part
+			nwords++
+		}
+		b.WriteString(part)
 	}
-	return b.String()
+	if nwords > 1 && !pools.canonical(parts[:nwords]) {
+		return "", false
+	}
+	return b.String(), true
 }

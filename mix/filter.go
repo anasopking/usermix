@@ -117,21 +117,3 @@ func repeats(s string) bool {
 	}
 	return false
 }
-
-// Plain reports whether segs is one or more words run together with no
-// separator, followed by a bare number with nothing else around it —
-// "john2005", "oliver4006", and just as much "johnthorne1195": joined with
-// no separator, it reads as one plain name before the number even though
-// it was built from two. Templates skips this shape by default; see
-// Templates' allowPlain.
-func Plain(segs []Segment) bool {
-	if len(segs) < 2 || segs[len(segs)-1].Kind != Number {
-		return false
-	}
-	for _, seg := range segs[:len(segs)-1] {
-		if seg.Kind != Word {
-			return false // a separator or an earlier number breaks the plain look
-		}
-	}
-	return true
-}
