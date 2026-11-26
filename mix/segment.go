@@ -26,8 +26,8 @@ type Segment struct {
 // MinLen and MaxLen bound a username's length in characters, matching what
 // most sites accept.
 const (
-	MinLen = 3
-	MaxLen = 24
+	MinLen = 8
+	MaxLen = 15
 )
 
 func kindOf(r rune) Kind {
