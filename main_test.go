@@ -13,3 +13,19 @@ func TestFormatShort(t *testing.T) {
 		}
 	}
 }
+
+func TestEmailSuffix(t *testing.T) {
+	cases := map[string]string{
+		"hotmail.com":   "@hotmail.com",
+		"@hotmail.com":  "@hotmail.com",
+		"  gmail.com  ": "@gmail.com",
+		"":              "",
+		"   ":           "",
+		"@":             "",
+	}
+	for in, want := range cases {
+		if got := emailSuffix(in); got != want {
+			t.Errorf("emailSuffix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

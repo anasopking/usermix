@@ -23,8 +23,8 @@ scripting; the plain command above is all you need otherwise.
 
 Prefer a window to a terminal? Run `./usermix gui`. It opens a page in your
 browser with a box for the usernames file, a box for how many to make, a
-Generate button and a progress bar, and writes to `generated_<count>.txt`
-the same way.
+Generate button, an optional email-domain box and a progress bar, and
+writes to `generated_<count>.txt` the same way.
 
 Every username is 8 to 15 characters: two or three whole names run
 together with no connector (`_ - .`), then optionally one number at the
@@ -32,6 +32,11 @@ very end, like `kevinsmith45` or `mariagarcia`. Never a number in the
 middle, never a connector. The "possible" count is how many it can
 actually write after every filter below, shown short: `950`, `1.4M`,
 `22B`, `161T`.
+
+Want email addresses instead of bare handles? Give it a domain and every
+line comes out as `kevinsmith45@hotmail.com`: type one in the window's
+email box, answer the interactive prompt, or pass `-domain hotmail.com` to
+`generate`.
 
 ## What it does
 
@@ -141,6 +146,7 @@ teaches a word.
 | `-seed` | fixed seed for repeatable output (0 = random) |
 | `-allow-plain` | allow single-name-plus-number usernames like `john2005` |
 | `-workers` | CPU cores to use (0 = all) |
+| `-domain` | append `@DOMAIN` to every username, e.g. `-domain hotmail.com` |
 | `-out` | file to write to (default: stdout) |
 
 If a pattern's combinations run out before `-n` is reached, usermix says
