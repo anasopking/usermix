@@ -79,18 +79,21 @@ func LearnPools(cleaned [][]Segment) *Pools {
 	keepWords(tailSeen, p.tail)
 	p.leadsByLen, p.tailsByLen = byLength(sortedKeys(p.lead)), byLength(sortedKeys(p.tail))
 	p.leadBuckets, p.tailBuckets = bucketsOf(p.leadsByLen), bucketsOf(p.tailsByLen)
-	p.fillRandomNumbers()
+	p.fillRandomNumbers(minDigits, maxDigits)
 	return p
 }
 
 // fillRandomNumbers stocks the number pool with every number of
-// minDigits..maxDigits digits: 0..9 for the shortest length, then without a
+// loDigits..hiDigits digits: 0..9 for a one-digit length, then without a
 // leading zero (10..99, 100..999) for longer ones so each number is a
-// distinct string of its own length. This is what makes every username end
-// with a random 1-to-3-digit number rather than one copied from the input.
-func (p *Pools) fillRandomNumbers() {
+// distinct string of its own length. A length of 0 adds nothing, so a range
+// of 0..0 leaves the pool empty and usernames get no trailing number.
+func (p *Pools) fillRandomNumbers(loDigits, hiDigits int) {
 	p.numbers = map[int][]string{}
-	for d := minDigits; d <= maxDigits; d++ {
+	for d := loDigits; d <= hiDigits; d++ {
+		if d < 1 {
+			continue
+		}
 		lo := 0
 		if d > 1 {
 			lo = pow10(d - 1)
@@ -102,6 +105,17 @@ func (p *Pools) fillRandomNumbers() {
 		}
 		p.numbers[d] = nums
 	}
+}
+
+// clampDigits holds a requested digit count to 0..maxDigits.
+func clampDigits(d int) int {
+	if d < 0 {
+		return 0
+	}
+	if d > maxDigits {
+		return maxDigits
+	}
+	return d
 }
 
 func pow10(n int) int {

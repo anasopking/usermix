@@ -23,13 +23,15 @@ const maxWords = 3
 
 // Templates extracts the name shapes among names' cleaned segments (see
 // clean) — the number of whole words run together, 2 or 3 — and turns each
-// into one pattern per trailing-number length (see minDigits..maxDigits),
-// so every generated username is those words followed by a random number of
-// that many digits. A bare name with no number is never made; allowPlain
-// lets a single name plus a number ("john2005") back in. Each shape's input
-// count is split evenly across the digit lengths, so short and long numbers
-// appear about equally often whatever the input's own numbers were.
-func Templates(cleaned [][]Segment, pools *Pools, allowPlain bool) []Template {
+// into one pattern per trailing-number length in loDigits..hiDigits, so a
+// generated username is those words followed by a number of that many
+// digits. A length of 0 means no trailing number (loDigits and hiDigits
+// both 0 makes every username a bare name). A bare name is otherwise never
+// made; allowPlain lets a single name (plus its number) back in. Each
+// shape's input count is split evenly across the allowed digit lengths, so
+// when several are allowed short and long numbers appear about equally often
+// whatever the input's own numbers were.
+func Templates(cleaned [][]Segment, pools *Pools, allowPlain bool, loDigits, hiDigits int) []Template {
 	seen := map[string]int{}
 	base := map[string][]Shape{}
 	var order []string
@@ -47,8 +49,11 @@ func Templates(cleaned [][]Segment, pools *Pools, allowPlain bool) []Template {
 	}
 	var templates []Template
 	for _, key := range order {
-		for d := minDigits; d <= maxDigits; d++ {
-			shape := append(append([]Shape(nil), base[key]...), Shape{Kind: Number, Width: d})
+		for d := loDigits; d <= hiDigits; d++ {
+			shape := append([]Shape(nil), base[key]...)
+			if d > 0 {
+				shape = append(shape, Shape{Kind: Number, Width: d})
+			}
 			t := Template{shape: shape, seen: seen[key]}
 			t.cells, t.total = cellsOf(shape, pools)
 			if t.total > 0 {

@@ -87,6 +87,11 @@ func (s *guiServer) start(w http.ResponseWriter, r *http.Request) {
 		fail("Enter a whole number above 0.")
 		return
 	}
+	lo, hi, ok := parseDigits(r.FormValue("digits"))
+	if !ok {
+		fail("Digits must be 0, 1, 2, 3, or blank for random.")
+		return
+	}
 	names, err := readNames(path)
 	if err != nil {
 		fail("Can't read that file: " + err.Error())
@@ -96,7 +101,7 @@ func (s *guiServer) start(w http.ResponseWriter, r *http.Request) {
 		fail("That file has no usernames in it.")
 		return
 	}
-	corpus := mix.Learn(names, false)
+	corpus := mix.LearnDigits(names, false, lo, hi)
 	if corpus.Possible() == 0 {
 		fail("Found no usable patterns in that file; try one with more usernames.")
 		return
@@ -188,7 +193,7 @@ const guiPage = `<!doctype html>
   main { max-width: 420px; margin: 48px auto; padding: 28px; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
   h1 { font-size: 22px; margin: 0 0 20px; }
   label { display: block; font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
-  input { width: 100%; box-sizing: border-box; padding: 10px; font-size: 15px; border: 1px solid #c8ccd4; border-radius: 8px; }
+  input, select { width: 100%; box-sizing: border-box; padding: 10px; font-size: 15px; border: 1px solid #c8ccd4; border-radius: 8px; background: #fff; }
   button { margin-top: 20px; width: 100%; padding: 11px; font-size: 15px; font-weight: 600; color: #fff; background: #2f6fed; border: 0; border-radius: 8px; cursor: pointer; }
   button:disabled { background: #9db6ea; cursor: default; }
   .bar { margin-top: 20px; height: 10px; background: #e4e7ec; border-radius: 5px; overflow: hidden; }
@@ -205,6 +210,14 @@ const guiPage = `<!doctype html>
     <input id="file" name="file" placeholder="e.g. names.txt" required>
     <label for="count">How many usernames</label>
     <input id="count" name="count" type="number" min="1" required>
+    <label for="digits">Digits at end</label>
+    <select id="digits" name="digits">
+      <option value="">Random (1-3)</option>
+      <option value="0">None</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+    </select>
     <label for="domain">Email domain (optional)</label>
     <input id="domain" name="domain" placeholder="e.g. hotmail.com">
     <button id="go" type="submit">Generate</button>
