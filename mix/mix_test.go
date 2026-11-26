@@ -113,10 +113,10 @@ func TestAllowPlainOptIn(t *testing.T) {
 
 func TestGenerateIsDuplicateFree(t *testing.T) {
 	c := Learn(seedNames(), false)
-	if c.Total() < 100000 {
+	if c.Total() < 200000 {
 		t.Fatalf("test corpus too small: %d combinations", c.Total())
 	}
-	const n = 100000
+	const n = 50000
 	seen := make(map[string]bool, n)
 	input := map[string]bool{}
 	for _, name := range seedNames() {

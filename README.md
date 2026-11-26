@@ -10,7 +10,7 @@ go build -o usermix .
 ```
 
 ```
-Usermix file: mine.txt
+Usernames file: mine.txt
 Learned from 1,000,000 usernames; 476,091,132,000 possible from them.
 How many usernames to generate: 1000000000
 Generating [##############################] 100% (1,000,000,000/1,000,000,000)
@@ -20,6 +20,13 @@ Wrote 1,000,000,000 usernames to generated_1000000000.txt in 7m47s.
 That's the whole interface: a file, a count, a progress bar, and a numbered
 output file it never overwrites. Flags and subcommands below are there for
 scripting; the plain command above is all you need otherwise.
+
+Prefer a window to a terminal? Run `./usermix gui`. It opens a page in your
+browser with a box for the usernames file, a box for how many to make, a
+Generate button and a progress bar, and writes to `generated_<count>.txt`
+the same way. The window makes usernames without connectors (`_ - .`): it
+strips them from your list first, so `kevin_smith` is learned as
+`kevinsmith`. Usernames are 8 to 15 characters long.
 
 ## What it does
 
@@ -113,6 +120,7 @@ teaches a word.
 ```sh
 ./usermix generate [flags] FILE     # FILE, or - for stdin; writes to stdout
 ./usermix info     [flags] FILE     # show what usermix learned, generate nothing
+./usermix gui                       # open a simple window in your browser
 ```
 
 | Flag | Meaning |

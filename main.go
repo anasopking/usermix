@@ -24,6 +24,8 @@ Usage:
                                    write new ones to stdout
   usermix info     [flags] FILE   show what usermix learned from FILE,
                                    without generating anything
+  usermix gui                    open a simple window in your browser that
+                                   asks for the file and how many to make
 
 Run "usermix <command> -h" for a command's flags.
 `
@@ -42,6 +44,8 @@ func main() {
 		err = generate(args)
 	case "info":
 		err = info(args)
+	case "gui":
+		err = gui(args)
 	case "-h", "-help", "--help", "help":
 		fmt.Print(usage)
 		return
